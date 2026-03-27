@@ -17,10 +17,12 @@ load_dotenv()
 
 SYSTEM_PROMPT = (
     "You are a professional paraphrasing assistant. "
-    "Rewrite the given text to make it completely unique and plagiarism-free "
-    "while preserving the original meaning, tone, and technical accuracy. "
-    "Do NOT add explanations, notes, or commentary. "
-    "Return ONLY the rewritten text."
+    "Rewrite text to be unique and plagiarism-free while:\n"
+    "- Preserving the EXACT same meaning and technical accuracy\n"
+    "- Keeping approximately the SAME word count (±10%)\n"
+    "- Using the same sentence structure and tone\n"
+    "- NOT adding headers, bullets, explanations, or extra content\n"
+    "Return ONLY the rewritten text with no commentary."
 )
 
 
@@ -34,20 +36,21 @@ def _get_client() -> Groq:
     return Groq(api_key=api_key)
 
 
-BATCH_SEPARATOR = "\n\n<<<NEXT>>>\n\n"
-
-
 def paraphrase_batch(paragraphs: list[str], model: str) -> list[str]:
-    """Send multiple paragraphs in one API call to reduce rate-limit hits."""
+    """Paraphrase paragraphs using numbered markers for reliable parsing."""
     import time
     non_empty = [(i, p) for i, p in enumerate(paragraphs) if p.strip() and len(p.strip()) >= 10]
     if not non_empty:
         return paragraphs
 
-    combined = BATCH_SEPARATOR.join(p for _, p in non_empty)
+    # Build numbered input: [1] para1\n[2] para2\n...
+    numbered_input = "\n".join(f"[{n+1}] {p.strip()}" for n, (_, p) in enumerate(non_empty))
     prompt = (
-        f"Paraphrase each section below. Keep them separated by '{BATCH_SEPARATOR.strip()}'.\n\n"
-        + combined
+        "Paraphrase each numbered paragraph below. "
+        "Return ONLY the numbered paragraphs in the exact same order, "
+        "each starting with [N] on its own line. "
+        "Keep the same length and do not merge or split paragraphs.\n\n"
+        + numbered_input
     )
 
     client = _get_client()
@@ -63,16 +66,21 @@ def paraphrase_batch(paragraphs: list[str], model: str) -> list[str]:
                 max_tokens=4096,
             )
             raw = response.choices[0].message.content.strip()
-            parts = raw.split("<<<NEXT>>>")
-            parts = [re.sub(r'^["\']|["\']$', "", p).strip() for p in parts]
 
+            # Parse [N] markers reliably
             result = list(paragraphs)
-            for idx, (orig_i, _) in enumerate(non_empty):
-                result[orig_i] = parts[idx] if idx < len(parts) else paragraphs[orig_i]
+            for n, (orig_i, orig_p) in enumerate(non_empty):
+                pattern = rf'\[{n+1}\]\s*(.*?)(?=\[{n+2}\]|\Z)'
+                m = re.search(pattern, raw, re.DOTALL)
+                if m:
+                    text = re.sub(r'^["\']|["\']$', "", m.group(1)).strip()
+                    result[orig_i] = text if text else orig_p
+                else:
+                    result[orig_i] = orig_p   # fallback to original
             return result
         except Exception as e:
             if "429" in str(e) and attempt < 3:
-                time.sleep(2 ** attempt * 3)  # 3s, 6s, 12s
+                time.sleep(2 ** attempt * 3)
                 continue
             raise
     return paragraphs
@@ -106,6 +114,58 @@ def paraphrase_text(text: str, model: str = "llama-3.1-8b-instant") -> str:
     return text
 
 
+# ── AI Detection ─────────────────────────────────────────────────
+
+def _extract_sample(data: bytes, ext: str, max_chars: int = 2000) -> str:
+    try:
+        if ext == "txt":
+            return data.decode("utf-8", errors="ignore")[:max_chars]
+        elif ext == "docx":
+            from docx import Document
+            doc = Document(io.BytesIO(data))
+            return " ".join(p.text for p in doc.paragraphs if p.text.strip())[:max_chars]
+        elif ext == "pdf":
+            import fitz
+            doc = fitz.open(stream=data, filetype="pdf")
+            return "".join(page.get_text() for page in doc)[:max_chars]
+    except Exception:
+        pass
+    return ""
+
+
+def detect_ai_content(text: str, model: str) -> int:
+    """Returns 0-100 AI content percentage, or -1 on failure."""
+    if not text.strip():
+        return -1
+    try:
+        client = _get_client()
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an AI content detector. "
+                        "Respond with ONLY a single integer from 0 to 100 representing "
+                        "the percentage of the text that is AI-generated. "
+                        "0 = fully human-written, 100 = fully AI-generated. "
+                        "No explanation. Just the number."
+                    ),
+                },
+                {"role": "user", "content": text},
+            ],
+            temperature=0,
+            max_tokens=5,
+        )
+        raw = response.choices[0].message.content.strip()
+        m = re.search(r"\d+", raw)
+        if m:
+            return min(100, max(0, int(m.group())))
+    except Exception:
+        pass
+    return -1
+
+
 # ── Document Handler ─────────────────────────────────────────────
 
 def _get_para_full_text(para) -> str:
@@ -113,12 +173,42 @@ def _get_para_full_text(para) -> str:
 
 
 def _set_para_text_preserve_format(para, new_text: str):
+    """Replace paragraph text while preserving per-run formatting (bold, italic, font, size)."""
     if not para.runs:
         para.text = new_text
         return
-    para.runs[0].text = new_text
-    for run in para.runs[1:]:
-        run.text = ""
+
+    runs = para.runs
+    if len(runs) == 1:
+        runs[0].text = new_text
+        return
+
+    # Distribute new text proportionally across runs by original character count
+    orig_lengths = [len(r.text) for r in runs]
+    total = sum(orig_lengths)
+
+    if total == 0:
+        runs[0].text = new_text
+        for r in runs[1:]:
+            r.text = ""
+        return
+
+    pos = 0
+    new_len = len(new_text)
+    for i, (run, orig_len) in enumerate(zip(runs, orig_lengths)):
+        if i == len(runs) - 1:
+            run.text = new_text[pos:]
+        else:
+            chars = round(new_len * orig_len / total)
+            end = pos + chars
+            # Snap to nearest word boundary
+            if end < new_len:
+                space = new_text.rfind(" ", pos, end + 20)
+                if space > pos:
+                    end = space + 1
+            end = min(end, new_len)
+            run.text = new_text[pos:end]
+            pos = end
 
 
 def process_txt(content: bytes, model: str) -> bytes:
@@ -206,7 +296,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["*"],
-    expose_headers=["X-Output-Filename"],
+    expose_headers=["X-Output-Filename", "X-AI-Before", "X-AI-After"],
 )
 
 EXTENSION_MAP = {".docx": "docx", ".pdf": "pdf", ".txt": "txt"}
@@ -262,6 +352,9 @@ async def process_file(
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large. Max 20 MB.")
 
+    # AI detection — before
+    ai_before = detect_ai_content(_extract_sample(content, file_type), model)
+
     try:
         if file_type == "txt":
             result = process_txt(content, model)
@@ -277,6 +370,9 @@ async def process_file(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
+    # AI detection — after
+    ai_after = detect_ai_content(_extract_sample(result, out_ext.lstrip(".")), model)
+
     stem = Path(filename).stem
     out_filename = f"{stem}_paraphrased{out_ext}"
     content_type = CONTENT_TYPES.get(out_ext.lstrip("."), "application/octet-stream")
@@ -287,6 +383,8 @@ async def process_file(
         headers={
             "Content-Disposition": f'attachment; filename="{out_filename}"',
             "X-Output-Filename": out_filename,
+            "X-AI-Before": str(ai_before),
+            "X-AI-After":  str(ai_after),
         },
     )
 
