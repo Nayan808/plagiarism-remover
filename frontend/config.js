@@ -4,5 +4,5 @@
 //  Example: "https://plagiarism-remover-api.onrender.com"
 // ─────────────────────────────────────────────────────────────
 const CONFIG = {
-  API_BASE: "plagremover.vercel.app",
+  API_BASE: "",
 };
