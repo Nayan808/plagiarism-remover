@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Plagiarism Remover</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <div class="container">
+
+    <header>
+      <h1>Plagiarism Remover</h1>
+      <p class="subtitle">Upload your document — get back a unique, paraphrased version with layout intact.</p>
+    </header>
+
+    <!-- Health Check Banner -->
+    <div id="health-banner" class="banner banner-checking">
+      Checking AI connection...
+    </div>
+
+    <!-- Upload Card -->
+    <div class="card">
+      <div id="drop-zone" class="drop-zone">
+        <div class="drop-icon">📄</div>
+        <p class="drop-text">Drag & drop your file here</p>
+        <p class="drop-sub">or</p>
+        <label class="btn btn-outline" for="file-input">Browse File</label>
+        <input type="file" id="file-input" accept=".docx,.pdf,.txt" hidden />
+        <p class="drop-hint">Supported: <strong>.docx</strong> · <strong>.pdf</strong> · <strong>.txt</strong> &nbsp;|&nbsp; Max 20 MB</p>
+      </div>
+
+      <!-- File preview -->
+      <div id="file-preview" class="file-preview hidden">
+        <span id="file-icon" class="file-type-badge">DOCX</span>
+        <div class="file-info">
+          <span id="file-name" class="file-name">document.docx</span>
+          <span id="file-size" class="file-size">0 KB</span>
+        </div>
+        <button id="clear-file" class="btn-clear" title="Remove">✕</button>
+      </div>
+
+      <!-- Model selector -->
+      <div class="model-row">
+        <label for="model-select">AI Model:</label>
+        <select id="model-select">
+          <option value="llama-3.1-8b-instant">Llama 3.1 8B (fast)</option>
+          <option value="llama-3.1-70b-versatile">Llama 3.1 70B (best quality)</option>
+          <option value="mixtral-8x7b-32768">Mixtral 8x7B</option>
+          <option value="llama3-8b-8192">Llama 3 8B</option>
+        </select>
+      </div>
+
+      <button id="process-btn" class="btn btn-primary" disabled>
+        Remove Plagiarism
+      </button>
+    </div>
+
+    <!-- Progress -->
+    <div id="progress-card" class="card hidden">
+      <p id="progress-label" class="progress-label">Processing your document...</p>
+      <div class="progress-bar-bg">
+        <div id="progress-bar" class="progress-bar-fill"></div>
+      </div>
+      <p class="progress-note">This may take a few minutes depending on document length.</p>
+    </div>
+
+    <!-- Result -->
+    <div id="result-card" class="card hidden result-card">
+      <div class="result-icon">✅</div>
+      <h2>Done! Your document is ready.</h2>
+      <p id="result-info" class="result-info"></p>
+      <a id="download-link" class="btn btn-success" download>Download Paraphrased File</a>
+      <button id="process-another" class="btn btn-outline" style="margin-top:10px">Process Another File</button>
+    </div>
+
+    <!-- Error -->
+    <div id="error-card" class="card hidden error-card">
+      <div class="result-icon">❌</div>
+      <h2>Something went wrong</h2>
+      <p id="error-msg" class="error-msg"></p>
+      <button id="retry-btn" class="btn btn-outline">Try Again</button>
+    </div>
+
+    <footer>
+      <p>Powered by <a href="https://groq.com" target="_blank">Groq AI</a> · Layout preserved · Free to use</p>
+    </footer>
+
+  </div>
+
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
