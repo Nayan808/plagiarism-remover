@@ -72,6 +72,25 @@
       <div class="result-icon">✅</div>
       <h2>Done! Your document is ready.</h2>
       <p id="result-info" class="result-info"></p>
+
+      <!-- AI Detection Score -->
+      <div id="ai-detection" class="ai-detection hidden">
+        <p class="ai-title">AI Content Detection</p>
+        <div class="ai-row">
+          <div class="ai-col">
+            <span class="ai-label">Before</span>
+            <div class="ai-bar-bg"><div id="ai-bar-before" class="ai-bar-fill"></div></div>
+            <span id="ai-pct-before" class="ai-pct">—</span>
+          </div>
+          <div class="ai-arrow">→</div>
+          <div class="ai-col">
+            <span class="ai-label">After</span>
+            <div class="ai-bar-bg"><div id="ai-bar-after" class="ai-bar-fill"></div></div>
+            <span id="ai-pct-after" class="ai-pct">—</span>
+          </div>
+        </div>
+      </div>
+
       <a id="download-link" class="btn btn-success" download>Download Paraphrased File</a>
       <button id="process-another" class="btn btn-outline" style="margin-top:10px">Process Another File</button>
     </div>

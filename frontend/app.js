@@ -124,11 +124,15 @@ async function processFile() {
     const blob = await res.blob();
     const outFilename = res.headers.get("X-Output-Filename") ||
       selectedFile.name.replace(/(\.[^.]+)$/, "_paraphrased$1");
+    const aiBefore = res.headers.get("X-AI-Before");
+    const aiAfter  = res.headers.get("X-AI-After");
 
     const url = URL.createObjectURL(blob);
     downloadLink.href = url;
     downloadLink.download = outFilename;
     resultInfo.textContent = `Output file: ${outFilename}`;
+
+    updateAiDetection(aiBefore, aiAfter);
 
     progressCard.classList.add("hidden");
     resultCard.classList.remove("hidden");
@@ -163,6 +167,36 @@ retryBtn.addEventListener("click", () => {
   hideCards();
   if (selectedFile) processBtn.disabled = false;
 });
+
+// ── AI Detection Display ───────────────────────
+function updateAiDetection(before, after) {
+  const section  = document.getElementById("ai-detection");
+  const b = parseInt(before, 10);
+  const a = parseInt(after,  10);
+
+  if (isNaN(b) || b < 0 || isNaN(a) || a < 0) {
+    section.classList.add("hidden");
+    return;
+  }
+
+  document.getElementById("ai-pct-before").textContent = b + "%";
+  document.getElementById("ai-pct-after").textContent  = a + "%";
+
+  const barBefore = document.getElementById("ai-bar-before");
+  const barAfter  = document.getElementById("ai-bar-after");
+  barBefore.style.width      = b + "%";
+  barAfter.style.width       = a + "%";
+  barBefore.style.background = aiColor(b);
+  barAfter.style.background  = aiColor(a);
+
+  section.classList.remove("hidden");
+}
+
+function aiColor(pct) {
+  if (pct >= 70) return "#ef4444";   // red   — high AI
+  if (pct >= 40) return "#f97316";   // orange — medium
+  return "#22c55e";                  // green  — mostly human
+}
 
 // ── Init ──────────────────────────────────────
 checkHealth();
