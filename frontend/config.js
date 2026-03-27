@@ -4,5 +4,5 @@
 //  Example: "https://plagiarism-remover-api.onrender.com"
 // ─────────────────────────────────────────────────────────────
 const CONFIG = {
-  API_BASE: "https://plagremover.onrender.com",
+  API_BASE: "",
 };
