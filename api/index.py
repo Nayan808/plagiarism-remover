@@ -34,23 +34,76 @@ def _get_client() -> Groq:
     return Groq(api_key=api_key)
 
 
+BATCH_SEPARATOR = "\n\n<<<NEXT>>>\n\n"
+
+
+def paraphrase_batch(paragraphs: list[str], model: str) -> list[str]:
+    """Send multiple paragraphs in one API call to reduce rate-limit hits."""
+    import time
+    non_empty = [(i, p) for i, p in enumerate(paragraphs) if p.strip() and len(p.strip()) >= 10]
+    if not non_empty:
+        return paragraphs
+
+    combined = BATCH_SEPARATOR.join(p for _, p in non_empty)
+    prompt = (
+        f"Paraphrase each section below. Keep them separated by '{BATCH_SEPARATOR.strip()}'.\n\n"
+        + combined
+    )
+
+    client = _get_client()
+    for attempt in range(4):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.7,
+                max_tokens=4096,
+            )
+            raw = response.choices[0].message.content.strip()
+            parts = raw.split("<<<NEXT>>>")
+            parts = [re.sub(r'^["\']|["\']$', "", p).strip() for p in parts]
+
+            result = list(paragraphs)
+            for idx, (orig_i, _) in enumerate(non_empty):
+                result[orig_i] = parts[idx] if idx < len(parts) else paragraphs[orig_i]
+            return result
+        except Exception as e:
+            if "429" in str(e) and attempt < 3:
+                time.sleep(2 ** attempt * 3)  # 3s, 6s, 12s
+                continue
+            raise
+    return paragraphs
+
+
 def paraphrase_text(text: str, model: str = "llama-3.1-8b-instant") -> str:
+    """Single paragraph fallback (used for table cells)."""
+    import time
     text = text.strip()
     if not text or len(text) < 10:
         return text
     client = _get_client()
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Paraphrase this:\n\n{text}"},
-        ],
-        temperature=0.7,
-        max_tokens=2048,
-    )
-    result = response.choices[0].message.content.strip()
-    result = re.sub(r'^["\']|["\']$', "", result).strip()
-    return result
+    for attempt in range(4):
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Paraphrase this:\n\n{text}"},
+                ],
+                temperature=0.7,
+                max_tokens=2048,
+            )
+            result = response.choices[0].message.content.strip()
+            return re.sub(r'^["\']|["\']$', "", result).strip()
+        except Exception as e:
+            if "429" in str(e) and attempt < 3:
+                time.sleep(2 ** attempt * 3)
+                continue
+            raise
+    return text
 
 
 # ── Document Handler ─────────────────────────────────────────────
@@ -71,29 +124,30 @@ def _set_para_text_preserve_format(para, new_text: str):
 def process_txt(content: bytes, model: str) -> bytes:
     text = content.decode("utf-8", errors="ignore")
     paragraphs = text.split("\n")
-    output_parts = []
-    for para in paragraphs:
-        if para.strip():
-            output_parts.append(paraphrase_text(para, model))
-        else:
-            output_parts.append(para)
-    return "\n".join(output_parts).encode("utf-8")
+    result = paraphrase_batch(paragraphs, model)
+    return "\n".join(result).encode("utf-8")
 
 
 def process_docx(content: bytes, model: str) -> bytes:
     from docx import Document
     doc = Document(io.BytesIO(content))
-    for para in doc.paragraphs:
-        original = _get_para_full_text(para).strip()
-        if original:
-            _set_para_text_preserve_format(para, paraphrase_text(original, model))
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for para in cell.paragraphs:
-                    original = _get_para_full_text(para).strip()
-                    if original:
-                        _set_para_text_preserve_format(para, paraphrase_text(original, model))
+
+    # Batch-paraphrase all body paragraphs in one API call
+    paras = doc.paragraphs
+    texts = [_get_para_full_text(p) for p in paras]
+    paraphrased = paraphrase_batch(texts, model)
+    for para, new_text in zip(paras, paraphrased):
+        if new_text.strip():
+            _set_para_text_preserve_format(para, new_text)
+
+    # Table cells: collect all, batch once
+    cell_paras = [para for table in doc.tables for row in table.rows
+                  for cell in row.cells for para in cell.paragraphs]
+    cell_texts = [_get_para_full_text(p) for p in cell_paras]
+    cell_paraphrased = paraphrase_batch(cell_texts, model)
+    for para, new_text in zip(cell_paras, cell_paraphrased):
+        if new_text.strip():
+            _set_para_text_preserve_format(para, new_text)
     output = io.BytesIO()
     doc.save(output)
     output.seek(0)
