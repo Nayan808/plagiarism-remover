@@ -9,9 +9,6 @@ from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from groq import Groq
-from docx import Document
-import fitz  # PyMuPDF
-from pdf2docx import Converter
 from mangum import Mangum
 
 load_dotenv()
@@ -84,6 +81,7 @@ def process_txt(content: bytes, model: str) -> bytes:
 
 
 def process_docx(content: bytes, model: str) -> bytes:
+    from docx import Document
     doc = Document(io.BytesIO(content))
     for para in doc.paragraphs:
         original = _get_para_full_text(para).strip()
@@ -123,6 +121,7 @@ def _docx_to_pdf(docx_path: str, tmpdir: str, pdf_out: str) -> bytes:
 
 
 def process_pdf(content: bytes, model: str) -> bytes:
+    from pdf2docx import Converter
     with tempfile.TemporaryDirectory() as tmpdir:
         pdf_in = os.path.join(tmpdir, "input.pdf")
         docx_converted = os.path.join(tmpdir, "converted.docx")
